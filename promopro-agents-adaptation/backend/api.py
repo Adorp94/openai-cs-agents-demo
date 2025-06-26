@@ -1,8 +1,3 @@
-"""
-API entry point for the promotional products agents.
-This file exports the FastAPI app for uvicorn to run.
-"""
-
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
@@ -174,7 +169,7 @@ async def chat_endpoint(req: ChatRequest):
                 current_agent=current_agent_name,
                 messages=[],
                 events=[],
-                context=ctx.model_dump(),
+                context=ctx.dict(),
                 agents=_build_agents_list(),
                 guardrails=[],
             )
@@ -184,7 +179,7 @@ async def chat_endpoint(req: ChatRequest):
 
     current_agent = _get_agent_by_name(state["current_agent"])
     state["input_items"].append({"content": req.message, "role": "user"})
-    old_context = state["context"].model_dump().copy()
+    old_context = state["context"].dict().copy()
     guardrail_checks: List[GuardrailCheck] = []
 
     try:
@@ -204,7 +199,7 @@ async def chat_endpoint(req: ChatRequest):
                 passed=(g != failed),
                 timestamp=gr_timestamp,
             ))
-        refusal = "Lo siento, solo puedo responder preguntas relacionadas con productos promocionales."
+        refusal = "Sorry, I can only answer questions related to airline travel."
         state["input_items"].append({"role": "assistant", "content": refusal})
         return ChatResponse(
             conversation_id=conversation_id,
@@ -344,11 +339,3 @@ async def chat_endpoint(req: ChatRequest):
         agents=_build_agents_list(),
         guardrails=final_guardrails,
     )
-
-@app.get("/health")
-async def health():
-    """Health check endpoint."""
-    return {"status": "ok"}
-
-# Export the app for uvicorn
-__all__ = ["app"] 
