@@ -25,13 +25,25 @@ current_dir = pathlib.Path(__file__).parent
 PROMO_FILE_ID = upload_if_needed(os.getenv("PROMO_CSV_PATH", str(current_dir / "../data/promo.csv")))
 SUITUP_FILE_ID = upload_if_needed(os.getenv("SUITUP_CSV_PATH", str(current_dir / "../data/suitup.csv")))
 
-# Create Code Interpreter tools with correct container configuration
+# Create Code Interpreter tools with file IDs for pre-uploaded CSV files
 promo_code_interpreter = CodeInterpreterTool(
-    tool_config={"type": "code_interpreter", "container": {"type": "auto"}}
+    tool_config={
+        "type": "code_interpreter", 
+        "container": {
+            "type": "auto",
+            "file_ids": [PROMO_FILE_ID]
+        }
+    }
 )
 
 suitup_code_interpreter = CodeInterpreterTool(
-    tool_config={"type": "code_interpreter", "container": {"type": "auto"}}
+    tool_config={
+        "type": "code_interpreter", 
+        "container": {
+            "type": "auto", 
+            "file_ids": [SUITUP_FILE_ID]
+        }
+    }
 )
 
 # =========================
@@ -43,6 +55,8 @@ class PromoProAgentContext(BaseModel):
     business_unit: str | None = None  # "promoselect" or "suitup"
     customer_name: str | None = None
     selected_products: list[dict] = []
+    descripcion: str | None = None  # Product description/type they're looking for
+    precio: str | None = None  # Budget/price range as string
 
 def create_initial_context() -> PromoProAgentContext:
     """Factory for a new PromoProAgentContext."""
@@ -52,8 +66,6 @@ def create_initial_context() -> PromoProAgentContext:
 # TOOLS
 # =========================
 
-
-
 @function_tool(
     name_override="display_business_selector",
     description_override="Display business unit selector to let customer choose between Promoselect and SuitUp."
@@ -61,6 +73,30 @@ def create_initial_context() -> PromoProAgentContext:
 async def display_business_selector() -> str:
     """Trigger the UI to show business unit selection buttons."""
     return "DISPLAY_BUSINESS_SELECTOR"
+
+@function_tool(
+    name_override="save_product_description",
+    description_override="Save the type/description of product the customer is looking for."
+)
+async def save_product_description(
+    context: RunContextWrapper[PromoProAgentContext], 
+    descripcion: str
+) -> str:
+    """Save the product description to context."""
+    context.context.descripcion = descripcion
+    return f"Guardado: buscando {descripcion}"
+
+@function_tool(
+    name_override="save_budget",
+    description_override="Save the customer's budget or price range."
+)
+async def save_budget(
+    context: RunContextWrapper[PromoProAgentContext], 
+    precio: str
+) -> str:
+    """Save the budget/price range to context."""
+    context.context.precio = precio
+    return f"Guardado: presupuesto {precio}"
 
 # =========================
 # HOOKS
@@ -145,25 +181,34 @@ promoselect_agent = Agent[PromoProAgentContext](
     model="gpt-4.1",
     handoff_description="A helpful agent that can search for individual promotional products from Promoselect.",
     instructions=f"""{RECOMMENDED_PROMPT_PREFIX}
-    You are a specialist in individual promotional products for Promoselect.
-    Your role is to help customers find the perfect promotional items from our catalog.
-    
-    You have access to code interpreter. When you need to analyze product data, 
-    ask the user to upload the CSV file, or if they mention they already have data available,
-    use Python to analyze it. The CSV should contain: sku, precio, categorias, nombre, descripcion, medidas, imagenes_url
+    You are a friendly sales specialist at Promoselect, helping customers find perfect promotional products.
+    Speak naturally as if you were a human sales representative who knows the catalog very well.
+    Never mention technical details like CSV files, file IDs, or code interpreter tools.
     
     Process:
-    1. Ask what type of promotional products they're looking for
-    2. Use Python code to analyze any available data and find matching products
-    3. When you find 3 good options that match their needs, present them in this format:
+    1. First, ask what type of promotional product they're looking for, then use save_product_description tool
+    2. Then ask about their budget or price range, then use save_budget tool  
+    3. ONLY after you have both pieces of information (descripcion, precio), 
+       use the Code Interpreter tool. Replace the descripcion and precio with the actual values from context and send this prompt: 
+       "Search for [descripcion] that are below [precio] pesos. Give me the best 3 options in the following structure:
+       
+       For product 1:
+           **Message 1:** {{nombre}} — {{descripcion}} | ${{precio}} MXN
+           **Message 2:** {{imagenes_url}}
+           
+       For product 2:
+           **Message 1:** {{nombre}} — {{descripcion}} | ${{precio}} MXN
+           **Message 2:** {{imagenes_url}}
+           
+       For product 3:
+           **Message 1:** {{nombre}} — {{descripcion}} | ${{precio}} MXN
+           **Message 2:** {{imagenes_url}}"
+       
+    4. After the Code Interpreter responds, present the products exactly as returned.
     
-    For each of the 3 products:
-    **Message 1:** {{nombre}} — {{descripcion}} | ${{precio}} MXN
-    **Message 2:** {{imagenes_url}}
-    
-    Always present exactly 3 products in separate messages as shown above.
+    Be conversational and helpful, never technical.
     """,
-    tools=[promo_code_interpreter],
+    tools=[save_product_description, save_budget, promo_code_interpreter],
     input_guardrails=[relevance_guardrail, jailbreak_guardrail],
 )
 
@@ -172,25 +217,34 @@ suitup_agent = Agent[PromoProAgentContext](
     model="gpt-4.1",
     handoff_description="A helpful agent that can search for promotional product kits from SuitUp.",
     instructions=f"""{RECOMMENDED_PROMPT_PREFIX}
-    You are a specialist in promotional product kits for SuitUp.
-    Your role is to help customers find the perfect promotional kits from our catalog.
-    
-    You have access to code interpreter. When you need to analyze product data,
-    ask the user to upload the CSV file, or if they mention they already have data available,
-    use Python to analyze it. The CSV should contain: precio, nombre, descripcion, productos, imagen
+    You are a friendly sales specialist at SuitUp, helping customers find perfect promotional kits.
+    Speak naturally as if you were a human sales representative who knows the catalog very well.
+    Never mention technical details like CSV files, file IDs, or code interpreter tools.
     
     Process:
-    1. Ask what type of promotional kits they're looking for
-    2. Use Python code to analyze any available data and find matching kits
-    3. When you find 3 good options that match their needs, present them in this format:
+    1. First, ask what type of promotional kit they're looking for, then use save_product_description tool
+    2. Then ask about their budget or price range, then use save_budget tool
+    3. ONLY after you have both pieces of information (descripcion, precio),
+       use the Code Interpreter tool. Replace the descripcion and precio with the actual values from context and send this prompt:
+       "Search for [descripcion] that are below [precio] pesos. Give me the best 3 options in the following structure:
+       
+       For kit 1:
+           **Message 1:** {{nombre}} — {{descripcion}} — ({{productos}}) | ${{precio}} MXN
+           **Message 2:** {{imagen}}
+           
+       For kit 2:
+           **Message 1:** {{nombre}} — {{descripcion}} — ({{productos}}) | ${{precio}} MXN
+           **Message 2:** {{imagen}}
+           
+       For kit 3:
+           **Message 1:** {{nombre}} — {{descripcion}} — ({{productos}}) | ${{precio}} MXN
+           **Message 2:** {{imagen}}"
+       
+    4. After the Code Interpreter responds, present the kits exactly as returned.
     
-    For each of the 3 kits:
-    **Message 1:** {{nombre}} — {{descripcion}} — ({{productos}}) | ${{precio}} MXN  
-    **Message 2:** {{imagen}}
-    
-    Always present exactly 3 kits in separate messages as shown above.
+    Be conversational and helpful, never technical.
     """,
-    tools=[suitup_code_interpreter],
+    tools=[save_product_description, save_budget, suitup_code_interpreter],
     input_guardrails=[relevance_guardrail, jailbreak_guardrail],
 )
 

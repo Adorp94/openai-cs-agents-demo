@@ -130,6 +130,9 @@ dmypy.json
 #node modules
 node_modules/
 
-# ui stuff
+# Next.js build output
+.next/
+out/
 
+# ui stuff
 ui/.next/
