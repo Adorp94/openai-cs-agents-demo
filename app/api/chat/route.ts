@@ -1,27 +1,13 @@
-// Node.js serverless function for chat API
-export default async function handler(req, res) {
-  // Enable CORS
-  res.setHeader('Access-Control-Allow-Origin', '*');
-  res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
-  res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
+import { NextRequest, NextResponse } from 'next/server';
 
-  // Handle preflight OPTIONS request
-  if (req.method === 'OPTIONS') {
-    res.status(200).end();
-    return;
-  }
-
-  // Only allow POST requests for chat
-  if (req.method !== 'POST') {
-    res.status(405).json({ error: 'Method not allowed' });
-    return;
-  }
-
+export async function POST(request: NextRequest) {
   try {
-    const { message, conversation_id } = req.body;
+    const { message, conversation_id } = await request.json();
+
+    // Generate a simple ID
+    const generateId = () => Math.random().toString(36).substring(2) + Date.now().toString(36);
 
     // For now, return a simple response indicating the backend is ready
-    // This can be expanded to include the actual OpenAI API calls
     const response = {
       conversation_id: conversation_id || generateId(),
       current_agent: "Triage Agent",
@@ -82,17 +68,24 @@ export default async function handler(req, res) {
       ];
     }
 
-    res.status(200).json(response);
+    return NextResponse.json(response, { status: 200 });
 
   } catch (error) {
     console.error('Chat API error:', error);
-    res.status(500).json({ 
-      error: 'Internal server error',
-      message: error.message 
-    });
+    return NextResponse.json(
+      { error: 'Internal server error', message: error instanceof Error ? error.message : 'Unknown error' },
+      { status: 500 }
+    );
   }
 }
 
-function generateId() {
-  return Math.random().toString(36).substring(2) + Date.now().toString(36);
+export async function OPTIONS(request: NextRequest) {
+  return new NextResponse(null, {
+    status: 200,
+    headers: {
+      'Access-Control-Allow-Origin': '*',
+      'Access-Control-Allow-Methods': 'POST, OPTIONS',
+      'Access-Control-Allow-Headers': 'Content-Type',
+    },
+  });
 } 
