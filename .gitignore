@@ -136,3 +136,4 @@ out/
 
 # ui stuff
 ui/.next/
+.vercel

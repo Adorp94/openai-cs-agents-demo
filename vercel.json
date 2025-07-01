@@ -1,34 +1,22 @@
 {
-  "version": 2,
   "builds": [
     {
       "src": "promopro-agents-adaptation/frontend/package.json",
       "use": "@vercel/next"
-    },
-    {
-      "src": "promopro-agents-adaptation/backend/api.py",
-      "use": "@vercel/python"
     }
   ],
   "routes": [
     {
       "src": "/api/(.*)",
-      "dest": "promopro-agents-adaptation/backend/api.py"
+      "dest": "/api/$1"
     },
     {
       "src": "/(.*)",
-      "dest": "promopro-agents-adaptation/frontend/$1"
+      "dest": "/promopro-agents-adaptation/frontend/$1"
     }
   ],
-  "env": {
-    "OPENAI_API_KEY": "@openai_api_key",
-    "PROMO_CSV_PATH": "./promopro-agents-adaptation/data/promo.csv",
-    "SUITUP_CSV_PATH": "./promopro-agents-adaptation/data/suitup.csv",
-    "HOST": "0.0.0.0",
-    "PORT": "8000"
-  },
   "functions": {
-    "promopro-agents-adaptation/backend/api.py": {
+    "api/chat.py": {
       "runtime": "python3.9"
     }
   }
