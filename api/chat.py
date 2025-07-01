@@ -5,6 +5,7 @@ from typing import Optional, List, Dict, Any
 from uuid import uuid4
 import time
 import logging
+import asyncio
 
 # Import modules directly since they're now in the same directory
 try:
@@ -93,7 +94,7 @@ def _build_agents_list() -> List[Dict[str, Any]]:
         make_agent_dict(suitup_agent),
     ]
 
-def process_chat(conversation_id: Optional[str], message: str) -> Dict[str, Any]:
+async def process_chat(conversation_id: Optional[str], message: str) -> Dict[str, Any]:
     """Process chat message and return response."""
     # Initialize or retrieve conversation state
     is_new = not conversation_id or conversation_id not in conversations
@@ -129,8 +130,7 @@ def process_chat(conversation_id: Optional[str], message: str) -> Dict[str, Any]
 
     try:
         # Run the agent asynchronously
-        import asyncio
-        result = asyncio.run(Runner.run(current_agent, state["input_items"], context=state["context"]))
+        result = await Runner.run(current_agent, state["input_items"], context=state["context"])
     except InputGuardrailTripwireTriggered as e:
         failed = e.guardrail_result.guardrail
         gr_output = e.guardrail_result.output.output_info
@@ -309,38 +309,31 @@ def process_chat(conversation_id: Optional[str], message: str) -> Dict[str, Any]
     }
 
 # Vercel serverless function handler
-def handler(request):
+def handler(request, response):
     """Main handler for Vercel serverless function."""
+    
+    # Set CORS headers
+    response.headers['Access-Control-Allow-Origin'] = '*'
+    response.headers['Access-Control-Allow-Methods'] = 'POST, OPTIONS'
+    response.headers['Access-Control-Allow-Headers'] = 'Content-Type'
+    response.headers['Content-Type'] = 'application/json'
     
     # Handle CORS preflight requests
     if request.method == 'OPTIONS':
-        return {
-            'statusCode': 200,
-            'headers': {
-                'Access-Control-Allow-Origin': '*',
-                'Access-Control-Allow-Methods': 'POST, OPTIONS',
-                'Access-Control-Allow-Headers': 'Content-Type',
-            },
-            'body': ''
-        }
+        response.status = 200
+        return ''
     
     # Only allow POST requests
     if request.method != 'POST':
-        return {
-            'statusCode': 405,
-            'headers': {
-                'Content-Type': 'application/json',
-                'Access-Control-Allow-Origin': '*',
-            },
-            'body': json.dumps({'error': 'Method not allowed'})
-        }
+        response.status = 405
+        return json.dumps({'error': 'Method not allowed'})
     
     try:
         # Parse request body
         if hasattr(request, 'json'):
             request_data = request.json
         else:
-            body = request.get_body() if hasattr(request, 'get_body') else request.body
+            body = request.body
             if isinstance(body, bytes):
                 body = body.decode('utf-8')
             request_data = json.loads(body)
@@ -349,30 +342,21 @@ def handler(request):
         conversation_id = request_data.get('conversation_id')
         message = request_data.get('message', '')
 
-        # Process the chat request
-        response_data = process_chat(conversation_id, message)
+        # Process the chat request asynchronously
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+        try:
+            response_data = loop.run_until_complete(process_chat(conversation_id, message))
+        finally:
+            loop.close()
         
-        return {
-            'statusCode': 200,
-            'headers': {
-                'Content-Type': 'application/json',
-                'Access-Control-Allow-Origin': '*',
-                'Access-Control-Allow-Methods': 'POST, OPTIONS',
-                'Access-Control-Allow-Headers': 'Content-Type',
-            },
-            'body': json.dumps(response_data)
-        }
+        response.status = 200
+        return json.dumps(response_data)
         
     except Exception as e:
         logger.error(f"Error processing chat request: {e}")
         import traceback
         traceback.print_exc()
         
-        return {
-            'statusCode': 500,
-            'headers': {
-                'Content-Type': 'application/json',
-                'Access-Control-Allow-Origin': '*',
-            },
-            'body': json.dumps({'error': str(e)})
-        } 
+        response.status = 500
+        return json.dumps({'error': str(e)}) 
