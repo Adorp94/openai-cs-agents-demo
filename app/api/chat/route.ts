@@ -34,34 +34,61 @@ function searchPromoProducts(keyword: string, maxPrice?: number, limit: number =
     const csvPath = path.join(process.cwd(), 'airtable', 'promo.csv');
     const csvData = fs.readFileSync(csvPath, 'utf-8');
     const lines = csvData.split('\n');
-    const headers = lines[0].split(',');
+    const headers = lines[0].split(',').map(h => h.trim());
     
     const products = [];
-    for (let i = 1; i < Math.min(lines.length, 100); i++) { // Limit for performance
+    for (let i = 1; i < Math.min(lines.length, 200); i++) { // Increased limit for better results
       const line = lines[i];
       if (!line.trim()) continue;
       
-      const values = line.split(',');
+      // Better CSV parsing for complex fields with quotes
+      const values = [];
+      let current = '';
+      let inQuotes = false;
+      
+      for (let char of line) {
+        if (char === '"') {
+          inQuotes = !inQuotes;
+        } else if (char === ',' && !inQuotes) {
+          values.push(current.trim());
+          current = '';
+        } else {
+          current += char;
+        }
+      }
+      values.push(current.trim()); // Add last field
+      
       const product: any = {};
       headers.forEach((header, index) => {
-        product[header.trim()] = values[index]?.trim() || '';
+        product[header] = values[index] || '';
       });
       
-      // Filter by keyword and price
+      // Filter by keyword (search in name and description)
       const matchesKeyword = !keyword || 
         product.nombre?.toLowerCase().includes(keyword.toLowerCase()) ||
-        product.descripcion?.toLowerCase().includes(keyword.toLowerCase());
+        product.descripcion?.toLowerCase().includes(keyword.toLowerCase()) ||
+        product.categorias?.toLowerCase().includes(keyword.toLowerCase());
         
-      const price = parseFloat(product.precio?.replace(/[^\d.]/g, '') || '0');
-      const withinBudget = !maxPrice || price <= maxPrice;
+      // Extract price (remove currency symbols and convert to number)
+      const priceText = product.precio || '';
+      const price = parseFloat(priceText.replace(/[$,\s]/g, ''));
+      const withinBudget = !maxPrice || (price > 0 && price <= maxPrice);
       
-      if (matchesKeyword && withinBudget) {
-        products.push(product);
+      if (matchesKeyword && withinBudget && product.nombre) {
+        products.push({
+          sku: product.sku,
+          nombre: product.nombre,
+          precio: product.precio,
+          descripcion: product.descripcion,
+          categorias: product.categorias,
+          imagenes_url: product.imagenes_url
+        });
       }
       
       if (products.length >= limit) break;
     }
     
+    console.log(`Search for "${keyword}" with max price ${maxPrice} found ${products.length} products`);
     return products;
   } catch (error) {
     console.error('Error searching promo products:', error);
@@ -74,17 +101,33 @@ function searchSuitUpKits(keyword: string, maxPrice?: number, limit: number = 3)
     const csvPath = path.join(process.cwd(), 'airtable', 'suitup.csv');
     const csvData = fs.readFileSync(csvPath, 'utf-8');
     const lines = csvData.split('\n');
-    const headers = lines[0].split(',');
+    const headers = lines[0].split(',').map(h => h.trim());
     
     const kits = [];
-    for (let i = 1; i < Math.min(lines.length, 50); i++) { // Limit for performance
+    for (let i = 1; i < Math.min(lines.length, 100); i++) {
       const line = lines[i];
       if (!line.trim()) continue;
       
-      const values = line.split(',');
+      // Better CSV parsing for complex fields with quotes
+      const values = [];
+      let current = '';
+      let inQuotes = false;
+      
+      for (let char of line) {
+        if (char === '"') {
+          inQuotes = !inQuotes;
+        } else if (char === ',' && !inQuotes) {
+          values.push(current.trim());
+          current = '';
+        } else {
+          current += char;
+        }
+      }
+      values.push(current.trim()); // Add last field
+      
       const kit: any = {};
       headers.forEach((header, index) => {
-        kit[header.trim()] = values[index]?.trim() || '';
+        kit[header] = values[index] || '';
       });
       
       // Filter by keyword and price
@@ -93,16 +136,24 @@ function searchSuitUpKits(keyword: string, maxPrice?: number, limit: number = 3)
         kit.descripcion?.toLowerCase().includes(keyword.toLowerCase()) ||
         kit.productos?.toLowerCase().includes(keyword.toLowerCase());
         
-      const price = parseFloat(kit.precio?.replace(/[^\d.]/g, '') || '0');
-      const withinBudget = !maxPrice || price <= maxPrice;
+      const priceText = kit.precio || '';
+      const price = parseFloat(priceText.replace(/[$,\s]/g, ''));
+      const withinBudget = !maxPrice || (price > 0 && price <= maxPrice);
       
-      if (matchesKeyword && withinBudget) {
-        kits.push(kit);
+      if (matchesKeyword && withinBudget && kit.nombre) {
+        kits.push({
+          nombre: kit.nombre,
+          precio: kit.precio,
+          descripcion: kit.descripcion,
+          productos: kit.productos,
+          imagen: kit.imagen
+        });
       }
       
       if (kits.length >= limit) break;
     }
     
+    console.log(`Search for "${keyword}" with max price ${maxPrice} found ${kits.length} kits`);
     return kits;
   } catch (error) {
     console.error('Error searching SuitUp kits:', error);
