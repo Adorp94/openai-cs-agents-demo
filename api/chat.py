@@ -6,6 +6,7 @@ from uuid import uuid4
 import time
 import logging
 import asyncio
+from http.server import BaseHTTPRequestHandler
 
 # Import modules directly since they're now in the same directory
 try:
@@ -308,55 +309,60 @@ async def process_chat(conversation_id: Optional[str], message: str) -> Dict[str
         "guardrails": final_guardrails,
     }
 
-# Vercel serverless function handler
-def handler(request, response):
-    """Main handler for Vercel serverless function."""
-    
-    # Set CORS headers
-    response.headers['Access-Control-Allow-Origin'] = '*'
-    response.headers['Access-Control-Allow-Methods'] = 'POST, OPTIONS'
-    response.headers['Access-Control-Allow-Headers'] = 'Content-Type'
-    response.headers['Content-Type'] = 'application/json'
-    
-    # Handle CORS preflight requests
-    if request.method == 'OPTIONS':
-        response.status = 200
-        return ''
-    
-    # Only allow POST requests
-    if request.method != 'POST':
-        response.status = 405
-        return json.dumps({'error': 'Method not allowed'})
-    
-    try:
-        # Parse request body
-        if hasattr(request, 'json'):
-            request_data = request.json
-        else:
-            body = request.body
-            if isinstance(body, bytes):
-                body = body.decode('utf-8')
-            request_data = json.loads(body)
-        
-        # Extract request parameters
-        conversation_id = request_data.get('conversation_id')
-        message = request_data.get('message', '')
+class handler(BaseHTTPRequestHandler):
+    def do_OPTIONS(self):
+        self.send_response(200)
+        self.send_header('Access-Control-Allow-Origin', '*')
+        self.send_header('Access-Control-Allow-Methods', 'POST, OPTIONS')
+        self.send_header('Access-Control-Allow-Headers', 'Content-Type')
+        self.end_headers()
 
-        # Process the chat request asynchronously
-        loop = asyncio.new_event_loop()
-        asyncio.set_event_loop(loop)
+    def do_POST(self):
         try:
-            response_data = loop.run_until_complete(process_chat(conversation_id, message))
-        finally:
-            loop.close()
-        
-        response.status = 200
-        return json.dumps(response_data)
-        
-    except Exception as e:
-        logger.error(f"Error processing chat request: {e}")
-        import traceback
-        traceback.print_exc()
-        
-        response.status = 500
-        return json.dumps({'error': str(e)}) 
+            # Read request body
+            content_length = int(self.headers['Content-Length'])
+            post_data = self.rfile.read(content_length)
+            request_data = json.loads(post_data.decode('utf-8'))
+            
+            # Extract request parameters
+            conversation_id = request_data.get('conversation_id')
+            message = request_data.get('message', '')
+
+            # Process the chat request asynchronously
+            loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(loop)
+            try:
+                response_data = loop.run_until_complete(process_chat(conversation_id, message))
+            finally:
+                loop.close()
+            
+            # Send response
+            self.send_response(200)
+            self.send_header('Content-Type', 'application/json')
+            self.send_header('Access-Control-Allow-Origin', '*')
+            self.send_header('Access-Control-Allow-Methods', 'POST, OPTIONS')
+            self.send_header('Access-Control-Allow-Headers', 'Content-Type')
+            self.end_headers()
+            
+            self.wfile.write(json.dumps(response_data).encode('utf-8'))
+            
+        except Exception as e:
+            logger.error(f"Error processing chat request: {e}")
+            import traceback
+            traceback.print_exc()
+            
+            self.send_response(500)
+            self.send_header('Content-Type', 'application/json')
+            self.send_header('Access-Control-Allow-Origin', '*')
+            self.end_headers()
+            
+            error_response = {'error': str(e)}
+            self.wfile.write(json.dumps(error_response).encode('utf-8'))
+
+    def do_GET(self):
+        self.send_response(405)
+        self.send_header('Content-Type', 'application/json')
+        self.send_header('Access-Control-Allow-Origin', '*')
+        self.end_headers()
+        error_response = {'error': 'Method not allowed'}
+        self.wfile.write(json.dumps(error_response).encode('utf-8')) 
