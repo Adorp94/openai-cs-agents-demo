@@ -1,20 +1,4 @@
 {
-  "builds": [
-    {
-      "src": "promopro-agents-adaptation/frontend/package.json",
-      "use": "@vercel/next"
-    }
-  ],
-  "routes": [
-    {
-      "src": "/api/(.*)",
-      "dest": "/api/$1"
-    },
-    {
-      "src": "/(.*)",
-      "dest": "/promopro-agents-adaptation/frontend/$1"
-    }
-  ],
   "functions": {
     "api/chat.py": {
       "runtime": "python3.9"
