@@ -125,6 +125,21 @@ def _get_guardrail_name(g) -> str:
         return fn_name.replace("_", " ").title()
     return str(g)
 
+def _parse_separate_messages(text: str) -> List[str]:
+    """Parse formatted tool result and extract individual messages."""
+    messages = []
+    lines = text.split('\n')
+    
+    for line in lines:
+        # Look for message patterns (MENSAJE 1A:, MENSAJE 1B:, etc.)
+        if line.strip().startswith('MENSAJE ') and ':' in line:
+            # Extract the message content after the colon
+            message_content = line.split(':', 1)[1].strip()
+            if message_content:
+                messages.append(message_content)
+    
+    return messages
+
 def _build_agents_list() -> List[Dict[str, Any]]:
     """Build a list of all available agents and their metadata."""
     def make_agent_dict(agent):
@@ -217,8 +232,19 @@ async def chat_endpoint(req: ChatRequest):
     for item in result.new_items:
         if isinstance(item, MessageOutputItem):
             text = ItemHelpers.text_message_output(item)
-            messages.append(MessageResponse(content=text, agent=item.agent.name))
-            events.append(AgentEvent(id=uuid4().hex, type="message", agent=item.agent.name, content=text))
+            
+            # Check if this is a tool result with special formatting instructions for separate messages
+            if "IMPORTANTE: Envía cada mensaje por separado" in text:
+                # Parse and split into separate messages
+                separate_messages = _parse_separate_messages(text)
+                for msg in separate_messages:
+                    if msg.strip():  # Only add non-empty messages
+                        messages.append(MessageResponse(content=msg.strip(), agent=item.agent.name))
+                        events.append(AgentEvent(id=uuid4().hex, type="message", agent=item.agent.name, content=msg.strip()))
+            else:
+                # Normal single message handling
+                messages.append(MessageResponse(content=text, agent=item.agent.name))
+                events.append(AgentEvent(id=uuid4().hex, type="message", agent=item.agent.name, content=text))
         # Handle handoff output and agent switching
         elif isinstance(item, HandoffOutputItem):
             # Record the handoff event
@@ -339,3 +365,4 @@ async def chat_endpoint(req: ChatRequest):
         agents=_build_agents_list(),
         guardrails=final_guardrails,
     )
+ 

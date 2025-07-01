@@ -43,6 +43,22 @@ promopro-agents-adaptation/
 - **Agente Promoselect**: Especialista en productos individuales
 - **Agente SuitUp**: Especialista en kits promocionales
 
+### Estrategia de Búsqueda
+
+El sistema implementa una **búsqueda híbrida** optimizada:
+
+1. **Búsqueda Precisa (Primaria)**: 
+   - Filtrado directo con pandas en memoria
+   - Búsqueda por palabras clave, categoría y rango de precios
+   - Sin costo adicional, respuesta instantánea
+
+2. **Búsqueda Semántica (Fallback)**:
+   - Se activa cuando la búsqueda precisa no encuentra resultados
+   - Maneja consultas vagas como "regalo corporativo elegante"
+   - Búsqueda por palabras individuales como respaldo
+
+Esta estrategia elimina la dependencia costosa de Code Interpreter ($0.03/sesión) mientras mantiene capacidades de búsqueda avanzadas.
+
 ## Configuración
 
 ### 1. Backend
@@ -64,6 +80,8 @@ SUITUP_CSV_PATH=../data/suitup.csv
 ```bash
 pip install -r requirements.txt
 ```
+   
+   Las dependencias incluyen: pandas, fastapi, openai-agents, pydantic, uvicorn
 
 4. Ejecutar el servidor:
 ```bash
@@ -108,8 +126,8 @@ Esto ejecutará automáticamente tanto el frontend como el backend.
 
 - ✅ Reemplazado selector de asientos por selector de unidades de negocio
 - ✅ Adaptado contexto de aerolínea a productos promocionales
-- ✅ Implementado carga automática de CSV a OpenAI
-- ✅ Creado herramientas de búsqueda con Code Interpreter
+- ✅ Implementado búsqueda híbrida (precisa + semántica)
+- ✅ Optimizado performance con búsqueda en memoria pandas
 - ✅ Adaptado agentes para Promoselect y SuitUp
 - ✅ Modificado UI con componentes españoles
 - ✅ Configurado proxy API en Next.js
@@ -118,7 +136,7 @@ Esto ejecutará automáticamente tanto el frontend como el backend.
 
 El sistema utiliza:
 - **Agents SDK de OpenAI** para orquestación de agentes
-- **Code Interpreter** para búsqueda en CSV
+- **Pandas** para búsqueda optimizada en memoria
 - **FastAPI** para API backend
 - **Next.js 14** para frontend
 - **Tailwind CSS** para estilos

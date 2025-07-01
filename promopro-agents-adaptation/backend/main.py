@@ -13,37 +13,13 @@ from agents import (
     handoff,
     GuardrailFunctionOutput,
     input_guardrail,
-    CodeInterpreterTool,
 )
 from agents.extensions.handoff_prompt import RECOMMENDED_PROMPT_PREFIX
 
-# Upload CSV files on startup
-from file_uploader import upload_if_needed
-import pathlib
-import os
-current_dir = pathlib.Path(__file__).parent
-PROMO_FILE_ID = upload_if_needed(os.getenv("PROMO_CSV_PATH", str(current_dir / "../data/promo.csv")))
-SUITUP_FILE_ID = upload_if_needed(os.getenv("SUITUP_CSV_PATH", str(current_dir / "../data/suitup.csv")))
-
-# Create Code Interpreter tools with file IDs for pre-uploaded CSV files
-promo_code_interpreter = CodeInterpreterTool(
-    tool_config={
-        "type": "code_interpreter", 
-        "container": {
-            "type": "auto",
-            "file_ids": [PROMO_FILE_ID]
-        }
-    }
-)
-
-suitup_code_interpreter = CodeInterpreterTool(
-    tool_config={
-        "type": "code_interpreter", 
-        "container": {
-            "type": "auto", 
-            "file_ids": [SUITUP_FILE_ID]
-        }
-    }
+# Import the advanced search tools (precise + fuzzy search strategy)
+from tools import (
+    search_and_format_products,
+    search_and_format_kits,
 )
 
 # =========================
@@ -183,32 +159,25 @@ promoselect_agent = Agent[PromoProAgentContext](
     instructions=f"""{RECOMMENDED_PROMPT_PREFIX}
     You are a friendly sales specialist at Promoselect, helping customers find perfect promotional products.
     Speak naturally as if you were a human sales representative who knows the catalog very well.
-    Never mention technical details like CSV files, file IDs, or code interpreter tools.
+    Never mention technical details like search functions or database queries.
     
-    Process:
+    Search Strategy (IMPORTANT):
     1. First, ask what type of promotional product they're looking for, then use save_product_description tool
-    2. Then ask about their budget or price range, then use save_budget tool  
-    3. ONLY after you have both pieces of information (descripcion, precio), 
-       use the Code Interpreter tool. Replace the descripcion and precio with the actual values from context and send this prompt: 
-       "Search for [descripcion] that are below [precio] pesos. Give me the best 3 options in the following structure:
+    2. Then ask about their budget or price range, then use save_budget tool
+    3. ONLY after you have both pieces of information (descripcion, precio), use search_and_format_products:
+       - keyword = descripcion from context
+       - max_price = numeric value extracted from precio (e.g., if "300 pesos" then max_price=300)
        
-       For product 1:
-           **Message 1:** {{nombre}} — {{descripcion}} | ${{precio}} MXN
-           **Message 2:** {{imagenes_url}}
-           
-       For product 2:
-           **Message 1:** {{nombre}} — {{descripcion}} | ${{precio}} MXN
-           **Message 2:** {{imagenes_url}}
-           
-       For product 3:
-           **Message 1:** {{nombre}} — {{descripcion}} | ${{precio}} MXN
-           **Message 2:** {{imagenes_url}}"
+    4. The search tool will automatically:
+       - Try precise search first (fast pandas filtering)
+       - Fall back to semantic search if no results (vector search)
+       - Return properly formatted results ready for presentation
        
-    4. After the Code Interpreter responds, present the products exactly as returned.
+    5. Present the search results exactly as returned by the tool.
     
-    Be conversational and helpful, never technical.
+    The tool handles both precise and semantic search automatically. Be conversational and helpful.
     """,
-    tools=[save_product_description, save_budget, promo_code_interpreter],
+    tools=[save_product_description, save_budget, search_and_format_products],
     input_guardrails=[relevance_guardrail, jailbreak_guardrail],
 )
 
@@ -219,32 +188,25 @@ suitup_agent = Agent[PromoProAgentContext](
     instructions=f"""{RECOMMENDED_PROMPT_PREFIX}
     You are a friendly sales specialist at SuitUp, helping customers find perfect promotional kits.
     Speak naturally as if you were a human sales representative who knows the catalog very well.
-    Never mention technical details like CSV files, file IDs, or code interpreter tools.
+    Never mention technical details like search functions or database queries.
     
-    Process:
+    Search Strategy (IMPORTANT):
     1. First, ask what type of promotional kit they're looking for, then use save_product_description tool
     2. Then ask about their budget or price range, then use save_budget tool
-    3. ONLY after you have both pieces of information (descripcion, precio),
-       use the Code Interpreter tool. Replace the descripcion and precio with the actual values from context and send this prompt:
-       "Search for [descripcion] that are below [precio] pesos. Give me the best 3 options in the following structure:
+    3. ONLY after you have both pieces of information (descripcion, precio), use search_and_format_kits:
+       - keyword = descripcion from context
+       - max_price = numeric value extracted from precio (e.g., if "500 pesos" then max_price=500)
        
-       For kit 1:
-           **Message 1:** {{nombre}} — {{descripcion}} — ({{productos}}) | ${{precio}} MXN
-           **Message 2:** {{imagen}}
-           
-       For kit 2:
-           **Message 1:** {{nombre}} — {{descripcion}} — ({{productos}}) | ${{precio}} MXN
-           **Message 2:** {{imagen}}
-           
-       For kit 3:
-           **Message 1:** {{nombre}} — {{descripcion}} — ({{productos}}) | ${{precio}} MXN
-           **Message 2:** {{imagen}}"
+    4. The search tool will automatically:
+       - Try precise search first (fast pandas filtering)
+       - Fall back to semantic search if no results (vector search)
+       - Return properly formatted results ready for presentation
        
-    4. After the Code Interpreter responds, present the kits exactly as returned.
+    5. Present the search results exactly as returned by the tool.
     
-    Be conversational and helpful, never technical.
+    The tool handles both precise and semantic search automatically. Be conversational and helpful.
     """,
-    tools=[save_product_description, save_budget, suitup_code_interpreter],
+    tools=[save_product_description, save_budget, search_and_format_kits],
     input_guardrails=[relevance_guardrail, jailbreak_guardrail],
 )
 
