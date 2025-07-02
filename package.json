@@ -3,12 +3,15 @@
   "version": "0.1.0",
   "private": true,
   "scripts": {
-    "dev:next": "npx next dev",
-    "dev:server": "cd ../backend && python -m uvicorn api:app --reload --port 8000",
-    "dev": "concurrently \"npm run dev:next\" \"npm run dev:server\"",
-    "build": "next build",
-    "start": "next start",
-    "lint": "next lint"
+    "start:app": "./start.sh",
+    "dev:frontend": "cd frontend && npm run dev",
+    "dev:backend": "cd backend && ./venv/bin/python -m uvicorn api:app --reload --port 8000",
+    "dev": "cd frontend && npm run dev:full",
+    "build": "cd frontend && npm run build",
+    "start": "cd frontend && npm run start",
+    "lint": "cd frontend && npm run lint",
+    "install:frontend": "cd frontend && npm install",
+    "install:backend": "cd backend && source venv/bin/activate && pip install -r requirements.txt"
   },
   "dependencies": {
     "@radix-ui/react-scroll-area": "^1.2.9",

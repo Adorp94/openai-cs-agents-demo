@@ -3,6 +3,10 @@ from __future__ import annotations as _annotations
 import random
 from pydantic import BaseModel
 import string
+from dotenv import load_dotenv
+
+# Load environment variables from .env file
+load_dotenv()
 
 from agents import (
     Agent,
@@ -19,7 +23,9 @@ from agents.extensions.handoff_prompt import RECOMMENDED_PROMPT_PREFIX
 # Import the advanced search tools (precise + fuzzy search strategy)
 from tools import (
     search_and_format_products,
-    search_and_format_kits,
+    get_product_info,
+    promo_file_search,
+    suitup_file_search,
 )
 
 # =========================
@@ -161,23 +167,26 @@ promoselect_agent = Agent[PromoProAgentContext](
     Speak naturally as if you were a human sales representative who knows the catalog very well.
     Never mention technical details like search functions or database queries.
     
-    Search Strategy (IMPORTANT):
+    Search Strategy (VECTOR-ONLY APPROACH):
     1. First, ask what type of promotional product they're looking for, then use save_product_description tool
     2. Then ask about their budget or price range, then use save_budget tool
-    3. ONLY after you have both pieces of information (descripcion, precio), use search_and_format_products:
-       - keyword = descripcion from context
-       - max_price = numeric value extracted from precio (e.g., if "300 pesos" then max_price=300)
+    3. ONLY after you have both pieces of information (descripcion, precio), use your promo_file_search tool:
+       - This is the FileSearchTool that performs vector search on our product database
+       - Search using the descripcion from context as your query
+       - The tool finds products that match the semantic meaning of the request
        
-    4. The search tool will automatically:
-       - Try precise search first (fast pandas filtering)
-       - Fall back to semantic search if no results (vector search)
-       - Return properly formatted results ready for presentation
+    4. VECTOR SEARCH ONLY:
+       - Use promo_file_search tool directly - this is the FileSearchTool for semantic vector search
+       - Present results naturally as a sales representative would
+       - No fallback methods - pure vector search only
        
-    5. Present the search results exactly as returned by the tool.
+    5. FOLLOW-UP SUPPORT:
+       - If customer asks for more details about a specific product, use get_product_info tool
+       - This retrieves detailed information about products from the last search
     
-    The tool handles both precise and semantic search automatically. Be conversational and helpful.
+    The new approach uses only vector search for maximum relevance and stores results for follow-up questions.
     """,
-    tools=[save_product_description, save_budget, search_and_format_products],
+    tools=[save_product_description, save_budget, get_product_info] + ([promo_file_search] if promo_file_search else []),
     input_guardrails=[relevance_guardrail, jailbreak_guardrail],
 )
 
@@ -190,23 +199,26 @@ suitup_agent = Agent[PromoProAgentContext](
     Speak naturally as if you were a human sales representative who knows the catalog very well.
     Never mention technical details like search functions or database queries.
     
-    Search Strategy (IMPORTANT):
+    Search Strategy (VECTOR-ONLY APPROACH):
     1. First, ask what type of promotional kit they're looking for, then use save_product_description tool
     2. Then ask about their budget or price range, then use save_budget tool
-    3. ONLY after you have both pieces of information (descripcion, precio), use search_and_format_kits:
-       - keyword = descripcion from context
-       - max_price = numeric value extracted from precio (e.g., if "500 pesos" then max_price=500)
+    3. ONLY after you have both pieces of information (descripcion, precio), use your suitup_file_search tool:
+       - This is the FileSearchTool that performs vector search on our kit database
+       - Search using the descripcion from context as your query
+       - The tool finds kits that match the semantic meaning of the request
        
-    4. The search tool will automatically:
-       - Try precise search first (fast pandas filtering)
-       - Fall back to semantic search if no results (vector search)
-       - Return properly formatted results ready for presentation
+    4. VECTOR SEARCH ONLY:
+       - Use suitup_file_search tool directly - this is the FileSearchTool for semantic vector search
+       - Present results naturally as a sales representative would
+       - No fallback methods - pure vector search only
        
-    5. Present the search results exactly as returned by the tool.
+    5. FOLLOW-UP SUPPORT:
+       - If customer asks for more details about a specific kit, use get_product_info tool
+       - This retrieves detailed information about kits from the last search
     
-    The tool handles both precise and semantic search automatically. Be conversational and helpful.
+    The approach uses only vector search for maximum relevance and stores results for follow-up questions.
     """,
-    tools=[save_product_description, save_budget, search_and_format_kits],
+    tools=[save_product_description, save_budget, get_product_info] + ([suitup_file_search] if suitup_file_search else []),
     input_guardrails=[relevance_guardrail, jailbreak_guardrail],
 )
 

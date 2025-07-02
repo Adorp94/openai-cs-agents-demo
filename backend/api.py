@@ -5,6 +5,10 @@ from typing import Optional, List, Dict, Any
 from uuid import uuid4
 import time
 import logging
+from dotenv import load_dotenv
+
+# Load environment variables from .env file
+load_dotenv()
 
 from main import (
     triage_agent,

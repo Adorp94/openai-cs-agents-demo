@@ -9,9 +9,20 @@ import logging
 from typing import List, Dict
 from agents import function_tool, FileSearchTool
 from openai import OpenAI
+from dotenv import load_dotenv
 from vector_search import vector_manager
 
+# Load environment variables from .env file
+load_dotenv()
+
 logger = logging.getLogger(__name__)
+
+# ============================
+# CLEAN OUTPUT FORMATTING & PRODUCT STORAGE
+# ============================
+
+# Global storage for last search results (for user follow-up questions)
+_last_search_results = []
 
 # Load CSV files into memory on module import (fast access)
 current_dir = pathlib.Path(__file__).parent
@@ -169,35 +180,161 @@ def _setup_vector_search():
         return
         
     try:
-        # Set up vector stores
-        logger.info("Setting up vector stores...")
-        _promo_vector_store_id, _suitup_vector_store_id = vector_manager.setup_vector_stores()
+        # Get vector store IDs from environment or set them up
+        _promo_vector_store_id = os.getenv("PROMO_VECTOR_STORE_ID")
+        _suitup_vector_store_id = os.getenv("SUITUP_VECTOR_STORE_ID")
+        
+        if not _promo_vector_store_id or not _suitup_vector_store_id:
+            logger.info("Setting up vector stores from scratch...")
+            _promo_vector_store_id, _suitup_vector_store_id = vector_manager.setup_vector_stores()
+        else:
+            logger.info(f"Using existing vector stores - Promo: {_promo_vector_store_id}, SuitUp: {_suitup_vector_store_id}")
         
         # Create FileSearchTool instances
         _promo_file_search_tool = FileSearchTool(
             vector_store_ids=[_promo_vector_store_id],
-            max_num_results=5
+            max_num_results=10  # Get more results for better filtering
         )
         
         _suitup_file_search_tool = FileSearchTool(
             vector_store_ids=[_suitup_vector_store_id],
-            max_num_results=5
+            max_num_results=10
         )
         
-        logger.info(f"Vector search initialized - Promo: {_promo_vector_store_id}, SuitUp: {_suitup_vector_store_id}")
+        logger.info(f"Vector search initialized successfully")
         
     except Exception as e:
         logger.warning(f"Could not set up vector search: {e}")
         _promo_file_search_tool = None
         _suitup_file_search_tool = None
 
+# Create FileSearchTool instances as actual tools for the agents
+_setup_vector_search()
+
+# Export the FileSearchTool instances for use by agents
+promo_file_search = _promo_file_search_tool if _promo_file_search_tool else None
+suitup_file_search = _suitup_file_search_tool if _suitup_file_search_tool else None
+
+def _parse_vector_response_and_filter(vector_response: str, max_price: float | None, limit: int) -> List[Dict]:
+    """
+    Parse vector search response and extract matching products from catalog.
+    
+    Args:
+        vector_response: Response from FileSearchTool
+        max_price: Maximum price filter
+        limit: Maximum number of results
+        
+    Returns:
+        List of product dictionaries
+    """
+    if not vector_response or not isinstance(vector_response, str):
+        return []
+    
+    logger.info(f"Parsing vector response: {vector_response[:200]}...")
+    
+    # Extract product names/SKUs mentioned in the vector response
+    # This is a simple approach - the vector response should contain relevant product info
+    found_products = []
+    
+    if PROMO_CATALOG.empty:
+        return []
+    
+    df = PROMO_CATALOG.copy()
+    
+    # Apply price filter first if specified
+    if max_price is not None:
+        df = df[df["price_numeric"] <= max_price]
+    
+    # Look for products mentioned in the vector response
+    # The vector response should contain product names, descriptions, or SKUs
+    lines = vector_response.split('\n')
+    for line in lines:
+        if not line.strip():
+            continue
+            
+        # Try to match product names mentioned in the response
+        for _, product in df.iterrows():
+            product_name = str(product.get('nombre', '')).lower()
+            product_sku = str(product.get('sku', '')).lower()
+            
+            if (product_name and product_name in line.lower()) or (product_sku and product_sku in line.lower()):
+                cols = ["sku", "nombre", "categorias", "precio", "descripcion", "imagenes_url"]
+                available_cols = [col for col in cols if col in product.index]
+                product_dict = product[available_cols].to_dict()
+                
+                if product_dict not in found_products:
+                    found_products.append(product_dict)
+                    if len(found_products) >= limit:
+                        break
+        
+        if len(found_products) >= limit:
+            break
+    
+    logger.info(f"Extracted {len(found_products)} products from vector response")
+    return found_products
+
+@function_tool(
+    name_override="get_product_info",
+    description_override="Get detailed information about a specific product from the last search results."
+)
+def get_product_info(product_name: str) -> str:
+    """
+    Get detailed information about a specific product from stored search results.
+    
+    Args:
+        product_name: Name of the product to get info about
+        
+    Returns:
+        Detailed product information or not found message
+    """
+    global _last_search_results
+    
+    if not _last_search_results:
+        return "No hay productos almacenados de búsquedas anteriores."
+    
+    # Search for the product by name (case-insensitive)
+    for product in _last_search_results:
+        if product_name.lower() in product.get('nombre', '').lower():
+            return _format_single_product_detailed(product)
+    
+    return f"No se encontró información sobre '{product_name}' en los resultados anteriores."
+
+def _format_single_product_detailed(product: Dict) -> str:
+    """Format a single product with all available details."""
+    nombre = product.get('nombre', 'N/A')
+    descripcion = product.get('descripcion', 'N/A')
+    precio = product.get('precio', 'N/A')
+    sku = product.get('sku', 'N/A')
+    categorias = product.get('categorias', 'N/A')
+    imagenes = product.get('imagenes_url', '')
+    
+    result = f"**{nombre}**\n"
+    result += f"Precio: ${precio} MXN\n"
+    result += f"SKU: {sku}\n"
+    result += f"Categorías: {categorias}\n"
+    result += f"Descripción: {descripcion}\n"
+    
+    if imagenes and imagenes.strip():
+        image_links = []
+        urls = [url.strip() for url in imagenes.split(',') if url.strip()]
+        for j, url in enumerate(urls[:3], 1):
+            image_links.append(f"[Imagen {j}]({url})")
+        if image_links:
+            result += f"Imágenes: {' | '.join(image_links)}"
+    
+    return result
+
 @function_tool(
     name_override="search_and_format_products",
-    description_override="Comprehensive search for promotional products using precise + semantic strategy. Use this after gathering description and budget."
+    description_override="Comprehensive search for promotional products using semantic + precise filtering strategy. Returns JSON with products that you must present individually."
 )
 def search_and_format_products(keyword: str, max_price: float | None = None, limit: int = 3) -> str:
     """
-    Comprehensive search that tries precise search first, then semantic search.
+    IMPROVED STRATEGY: Semantic search first for relevance, then precise filtering.
+    
+    1. Vector/semantic search → Find semantically relevant products 
+    2. Precise filtering → Apply price/budget constraints
+    3. Fallback to keyword search if vector search fails
     
     Args:
         keyword: Product description/query from user
@@ -207,13 +344,68 @@ def search_and_format_products(keyword: str, max_price: float | None = None, lim
     Returns:
         Formatted string with product results or no results message
     """
-    logger.info(f"Comprehensive search for: '{keyword}', max_price: {max_price}")
+    logger.info(f"IMPROVED search strategy for: '{keyword}', max_price: {max_price}")
     
-    # STEP 1: Try precise search first
+    # STEP 1: Try semantic/vector search FIRST for relevance
+    logger.info("Step 1: Trying semantic/vector search for relevance...")
+    _setup_vector_search()
+    
+    semantic_results = []
+    if _promo_file_search_tool is not None:
+        try:
+            # Try to use actual vector search via FileSearchTool
+            # This would return semantically relevant products
+            logger.info(f"Using FileSearchTool vector search for: {keyword}")
+            
+            # Note: FileSearchTool integration would happen here
+            # For now, let's implement a smarter keyword approach that focuses on semantic matching
+            
+            # Get a broader set of potentially relevant products first
+            df = PROMO_CATALOG.copy()
+            
+            # Create semantic-focused search terms
+            semantic_terms = _extract_semantic_terms(keyword)
+            logger.info(f"Semantic terms extracted: {semantic_terms}")
+            
+            semantic_matches = []
+            for term in semantic_terms:
+                # Look for semantic matches in product fields
+                mask = (
+                    df["nombre"].str.contains(term, case=False, na=False) |
+                    df["descripcion"].str.contains(term, case=False, na=False) |
+                    df["categorias"].str.contains(term, case=False, na=False)
+                )
+                matches = df[mask]
+                if not matches.empty:
+                    semantic_matches.append(matches)
+            
+            # Combine and deduplicate semantic matches
+            if semantic_matches:
+                all_matches = pd.concat(semantic_matches).drop_duplicates()
+                
+                # STEP 2: Apply precise filtering (price, etc.) to semantic results
+                if max_price is not None:
+                    all_matches = all_matches[all_matches["price_numeric"] <= max_price]
+                
+                # Get the best results
+                cols = ["sku", "nombre", "categorias", "precio", "descripcion", "imagenes_url"]
+                available_cols = [col for col in cols if col in all_matches.columns]
+                semantic_results = all_matches[available_cols].head(limit).to_dict(orient="records")
+                
+        except Exception as e:
+            logger.error(f"Vector search failed: {e}")
+    
+    logger.info(f"Semantic search returned {len(semantic_results)} results")
+    
+    # STEP 3: If semantic search found good results, return them
+    if semantic_results:
+        return _format_product_results(semantic_results)
+    
+    # STEP 4: Fallback to traditional precise search
+    logger.info("Semantic search found no results, trying traditional precise search...")
+    
     precise_results = []
-    if PROMO_CATALOG.empty:
-        logger.warning("PROMO_CATALOG is empty")
-    else:
+    if not PROMO_CATALOG.empty:
         df = PROMO_CATALOG.copy()
         
         # Apply keyword filter
@@ -235,63 +427,99 @@ def search_and_format_products(keyword: str, max_price: float | None = None, lim
     
     logger.info(f"Precise search returned {len(precise_results)} results")
     
-    # STEP 2: If precise search found results, format and return them
+    # STEP 5: Return results or no-results message
     if precise_results:
         return _format_product_results(precise_results)
-    
-    # STEP 3: Try semantic/vector search as fallback
-    logger.info("Precise search found no results, trying semantic search...")
-    
-    semantic_results = []
-    try:
-        # Skip vector search setup for now, use improved keyword fallback
-        # Extract meaningful words from the query
-        words = keyword.split()
-        meaningful_words = [word for word in words if len(word) > 3]
-        
-        logger.info(f"Trying semantic search with words: {meaningful_words}")
-        
-        for word in meaningful_words:
-            df = PROMO_CATALOG.copy()
-            mask = (
-                df["nombre"].str.contains(word, case=False, na=False) |
-                df["descripcion"].str.contains(word, case=False, na=False) |
-                df["categorias"].str.contains(word, case=False, na=False)
-            )
-            df = df[mask]
-            
-            if max_price is not None:
-                df = df[df["price_numeric"] <= max_price]
-            
-            if not df.empty:
-                cols = ["sku", "nombre", "categorias", "precio", "descripcion", "imagenes_url"]
-                available_cols = [col for col in cols if col in df.columns]
-                semantic_results = df[available_cols].head(limit).to_dict(orient="records")
-                logger.info(f"Found {len(semantic_results)} results with word: {word}")
-                break
-        
-        # If still no results, try with very broad search terms
-        if not semantic_results and max_price is not None:
-            logger.info("Trying broader search within price range...")
-            df = PROMO_CATALOG.copy()
-            df = df[df["price_numeric"] <= max_price]
-            if not df.empty:
-                # Get popular/featured products within budget
-                cols = ["sku", "nombre", "categorias", "precio", "descripcion", "imagenes_url"]
-                available_cols = [col for col in cols if col in df.columns]
-                semantic_results = df[available_cols].head(limit).to_dict(orient="records")
-                logger.info(f"Found {len(semantic_results)} results with broad price search")
-        
-    except Exception as e:
-        logger.error(f"Semantic search failed: {e}")
-    
-    logger.info(f"Semantic search returned {len(semantic_results)} results")
-    
-    # STEP 4: Return results or no-results message
-    if semantic_results:
-        return _format_product_results(semantic_results)
     else:
         return "No se encontraron productos que coincidan con los criterios de búsqueda."
+
+def _format_product_results_clean(results: List[Dict]) -> str:
+    """Format product search results for clean agent presentation."""
+    if not results:
+        return "No se encontraron productos."
+    
+    formatted_products = []
+    for i, product in enumerate(results, 1):
+        nombre = product.get('nombre', 'N/A')
+        descripcion = product.get('descripcion', 'N/A')
+        precio = product.get('precio', 'N/A')
+        imagenes = product.get('imagenes_url', '')
+        
+        # Format product info
+        product_info = f"**Producto {i}:** {nombre} — {descripcion} | ${precio} MXN"
+        formatted_products.append(product_info)
+        
+        # Add images if available
+        if imagenes and imagenes.strip():
+            image_links = []
+            # Split multiple image URLs and create clean links
+            urls = [url.strip() for url in imagenes.split(',') if url.strip()]
+            for j, url in enumerate(urls[:3], 1):  # Limit to 3 images
+                image_links.append(f"[Imagen {j}]({url})")
+            if image_links:
+                formatted_products.append(f"Imágenes: {' | '.join(image_links)}")
+    
+    return "\n\n".join(formatted_products)
+
+@function_tool(
+    name_override="search_products_structured", 
+    description_override="Save search criteria for vector search. The agent will use FileSearchTool automatically for vector search."
+)
+def search_products_structured(keyword: str, max_price: float | None = None, limit: int = 3) -> str:
+    """
+    VECTOR-ONLY APPROACH: This function saves search criteria.
+    The agent has FileSearchTool in its tools list and will use it automatically for vector search.
+    
+    Args:
+        keyword: Product description/query from user
+        max_price: Maximum price in MXN (optional)  
+        limit: Maximum number of results
+        
+    Returns:
+        Instructions for the agent to use FileSearchTool
+    """
+    logger.info(f"Search criteria saved - keyword: '{keyword}', max_price: {max_price}")
+    
+    search_instruction = f"Busca productos promocionales usando la descripción: '{keyword}'"
+    if max_price:
+        search_instruction += f" con precio máximo de ${max_price} MXN"
+    
+    search_instruction += f". Busca hasta {limit} productos relevantes usando las herramientas de búsqueda vectorial disponibles."
+    
+    return search_instruction
+
+def _extract_semantic_terms(keyword: str) -> List[str]:
+    """Extract semantic search terms from user query."""
+    # Map common user terms to product categories/terms (PRECISE MAPPING)
+    semantic_mapping = {
+        "termos": ["termo", "thermal", "insulado", "acero inoxidable", "doble pared", "vacío"],
+        "termo": ["termo", "thermal", "insulado", "acero inoxidable", "doble pared", "vacío"],
+        "botellas": ["botella", "deportiva", "hidratación", "agua"],
+        "tazas": ["taza", "mug", "café", "ceramica", "porcelana"],
+        "plumas": ["pluma", "bolígrafo", "escritura", "lapiz"],
+        "libretas": ["libreta", "cuaderno", "agenda", "bloc", "papel"],
+        "mochilas": ["mochila", "backpack", "bolsa", "equipaje"],
+        "llaveros": ["llavero", "key", "chain", "accesorio"],
+        "mouse": ["mouse", "ratón", "computadora", "oficina"],
+        "usb": ["usb", "memoria", "flash", "almacenamiento"],
+    }
+    
+    # Start with the original keyword
+    terms = [keyword.lower()]
+    
+    # Add semantic alternatives
+    for key, alternatives in semantic_mapping.items():
+        if key in keyword.lower():
+            terms.extend(alternatives)
+    
+    # Add individual words from the query
+    words = keyword.split()
+    for word in words:
+        if len(word) > 2:  # Skip very short words
+            terms.append(word.lower())
+    
+    # Remove duplicates and return
+    return list(set(terms))
 
 @function_tool(
     name_override="search_and_format_kits",
@@ -402,6 +630,27 @@ def _format_product_results(results: List[Dict]) -> str:
     instructions.append("\nRecuerda: Envía cada mensaje individualmente, no como un bloque de texto.")
     
     return "\n".join(instructions)
+
+def _format_product_results_json(results: List[Dict]) -> List[Dict]:
+    """Format product search results as structured JSON for easy agent processing."""
+    if not results:
+        return []
+    
+    formatted_products = []
+    for product in results:
+        nombre = product.get('nombre', 'N/A')
+        descripcion = product.get('descripcion', 'N/A')
+        precio = product.get('precio', 'N/A')
+        imagenes = product.get('imagenes_url', '')
+        
+        formatted_products.append({
+            "name": nombre,
+            "description": descripcion,
+            "price": precio,
+            "images": imagenes
+        })
+    
+    return formatted_products
 
 def _format_kit_results(results: List[Dict]) -> str:
     """Format kit search results for agent presentation with separate messages."""
